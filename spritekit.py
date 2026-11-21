@@ -512,11 +512,11 @@ def extract_cells(path, o) -> CellGrid:
             raw.append(r_)
             rng.append(rg)
             en.append(edge_energy(r_, *rg))
+        target = None
         if fixed:
             joint = float(np.mean(fixed))
             rigid_p = list(fixed)
         else:
-            target = None
             if o.target_size:
                 tw, th = (int(v) for v in o.target_size.lower().split("x"))
                 target = [tw or None, th or None]
@@ -1083,8 +1083,11 @@ def cmd_sheet(o):
     if o.loop and n > 2:
         last = float((canvas[-1] != canvas[0]).any(-1).mean())
         sm["loop_gap_ratio"] = round(last / max(np.mean(diffs), 1e-6), 2)
+    # frame_delta_mean: share of the cell that changes between consecutive frames. A reference-conditioned
+    # generator can lock the pose so hard that every "pose" is the same drawing: consistent, but it will shimmer
+    # instead of walk. Thresholds are heuristic (measured: a locked-pose walk scored 0.03).
     sheet_gates = {"height_cv": (0.04, 0.10, "high"), "area_ratio": (1.35, 2.5, "high"),
-                   "palette_drift_max": (0.08, 0.20, "high")}
+                   "palette_drift_max": (0.08, 0.20, "high"), "frame_delta_mean": (0.06, 0.015, "low")}
     sg = {k: {"value": sm[k], "grade": _grade(sm[k], *v)} for k, v in sheet_gates.items()}
     if "loop_gap_ratio" in sm:
         sg["loop_gap_ratio"] = {"value": sm["loop_gap_ratio"], "grade": _grade(sm["loop_gap_ratio"], 1.5, 4.0, "high")}
