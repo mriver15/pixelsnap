@@ -11,6 +11,7 @@ is rejected by numbers instead of by eye.
     python3 spritekit.py finish   raw.png --out OUT           # grid-snap, palette, clean, QA
     python3 spritekit.py sheet    f0.png f1.png ... --out OUT --name walk
     python3 spritekit.py rank     c1.png c2.png ... --out OUT # finish all candidates, rank
+    python3 spritekit.py animate  sprite.png --motion idle --out OUT   # deterministic motion, no model
     python3 spritekit.py qa       sprite.png                  # QA an already-native sprite
     python3 spritekit.py preview  sprite.png [--ascii]        # silhouette / multi-scale review
 
@@ -1013,6 +1014,35 @@ def cmd_rank(o):
     return 0 if survivors else 2
 
 
+def write_bundle(out: Path, name: str, canvas: list, fps: int, cols: int | None, sources: list, extra: dict):
+    """Engine-importable bundle shared by `sheet` and `animate`: sheet PNG, per-frame PNGs, manifest, Aseprite JSON."""
+    n = len(canvas)
+    ch, cw = canvas[0].shape[:2]
+    cols = cols or n
+    rows = math.ceil(n / cols)
+    sheet = np.zeros((rows * ch, cols * cw, 4), np.uint8)
+    frame_meta = []
+    for i, c in enumerate(canvas):
+        r, k = divmod(i, cols)
+        sheet[r * ch:(r + 1) * ch, k * cw:(k + 1) * cw] = c
+        frame_meta.append({"index": i, "source": sources[i] if i < len(sources) else sources[0],
+                           "rect": {"x": k * cw, "y": r * ch, "w": cw, "h": ch}})
+    out.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(sheet, "RGBA").save(out / f"{name}_sheet.png")
+    for i, c in enumerate(canvas):
+        Image.fromarray(c, "RGBA").save(out / f"{name}_frame_{i}.png")
+    manifest = {"name": name, "frame_count": n, "cell_size": [cw, ch], "columns": cols, "rows": rows,
+                "sheet_size": [cols * cw, rows * ch], "fps": fps, "frames": frame_meta, **extra}
+    (out / f"{name}_manifest.json").write_text(json.dumps(manifest, indent=2, default=lambda v: v.item()))
+    (out / f"{name}_aseprite.json").write_text(json.dumps({
+        "frames": [{"filename": f"{name} {i}", "frame": m["rect"], "rotated": False, "trimmed": False,
+                    "spriteSourceSize": {"x": 0, "y": 0, "w": cw, "h": ch}, "sourceSize": {"w": cw, "h": ch},
+                    "duration": int(1000 / fps)} for i, m in enumerate(frame_meta)],
+        "meta": {"app": "spritekit", "image": f"{name}_sheet.png", "format": "RGBA8888",
+                 "size": {"w": cols * cw, "h": rows * ch}, "scale": "1",
+                 "frameTags": [{"name": name, "from": 0, "to": n - 1, "direction": "forward"}]}}, indent=2))
+
+
 ANCHORS = ("bottom-center", "centroid-x", "none")
 
 
@@ -1053,16 +1083,6 @@ def cmd_sheet(o):
         canvas.append(c)
 
     n = len(canvas)
-    cols = o.cols or n
-    rows = math.ceil(n / cols)
-    sheet = np.zeros((rows * ch, cols * cw, 4), np.uint8)
-    frame_meta = []
-    for i, c in enumerate(canvas):
-        r, k = divmod(i, cols)
-        sheet[r * ch:(r + 1) * ch, k * cw:(k + 1) * cw] = c
-        frame_meta.append({"index": i, "source": Path(o.inputs[i]).name,
-                           "rect": {"x": k * cw, "y": r * ch, "w": cw, "h": ch}})
-
     # sheet-level consistency metrics
     heights = np.array([(f[..., 3] > 0).any(1).sum() for f in frames], float)
     areas = np.array([(f[..., 3] > 0).sum() for f in frames], float)
@@ -1095,33 +1115,189 @@ def cmd_sheet(o):
     verdicts = [r["verdict"] for r in reps] + [v["grade"] for v in sg.values()]
     sm["verdict"] = "FAIL" if "FAIL" in verdicts else ("WARN" if "WARN" in verdicts else "PASS")
 
-    out = Path(o.out)
-    out.mkdir(parents=True, exist_ok=True)
     name = o.name
-    Image.fromarray(sheet, "RGBA").save(out / f"{name}_sheet.png")
-    for i, c in enumerate(canvas):
-        Image.fromarray(c, "RGBA").save(out / f"{name}_frame_{i}.png")
-    manifest = {"name": name, "frame_count": n, "cell_size": [cw, ch], "columns": cols, "rows": rows,
-                "sheet_size": [cols * cw, rows * ch], "fps": o.fps, "anchor": o.anchor,
-                "palette": [to_hex(c) for c in union], "frames": frame_meta, "qa": sm,
-                "per_frame": [{k: r[k] for k in ("size", "colors", "score", "verdict", "orphan_ratio",
-                                                 "banding_ratio")} for r in reps]}
-    (out / f"{name}_manifest.json").write_text(json.dumps(manifest, indent=2))
-    (out / f"{name}_aseprite.json").write_text(json.dumps({
-        "frames": [{"filename": f"{name} {i}", "frame": m["rect"], "rotated": False, "trimmed": False,
-                    "spriteSourceSize": {"x": 0, "y": 0, "w": cw, "h": ch}, "sourceSize": {"w": cw, "h": ch},
-                    "duration": int(1000 / o.fps)} for i, m in enumerate(frame_meta)],
-        "meta": {"app": "spritekit", "image": f"{name}_sheet.png", "format": "RGBA8888",
-                 "size": {"w": cols * cw, "h": rows * ch}, "scale": "1",
-                 "frameTags": [{"name": name, "from": 0, "to": n - 1, "direction": "forward"}]}}, indent=2))
+    write_bundle(Path(o.out), name, canvas, o.fps, o.cols, [Path(x).name for x in o.inputs],
+                 {"anchor": o.anchor, "palette": [to_hex(c) for c in union], "qa": sm,
+                  "per_frame": [{k: r[k] for k in ("size", "colors", "score", "verdict", "orphan_ratio",
+                                                   "banding_ratio")} for r in reps]})
     for i, r in enumerate(reps):
         print(summary_line(Path(o.inputs[i]).name, r))
+    n = len(canvas)
     print(f"\nsheet {name}: {n} frames, cell {cw}x{ch}, {len(union)} colors, "
           f"height_cv {sm['height_cv']}, area_ratio {sm['area_ratio']}, palette_drift {sm['palette_drift_max']} -> {sm['verdict']}")
     for k, v in sg.items():
         if v["grade"] != "PASS":
             print(f"  [{k}:{v['grade']}] value {v['value']}")
     return 2 if sm["verdict"] == "FAIL" else 0
+
+
+# --------------------------------------------------------------------------------------
+# animate: deterministic motion for a finished sprite. Formulas only, no model, no randomness.
+# Everything works on the palette-index grid with nearest-neighbour sampling, so the output can never
+# contain a colour the sprite did not already have.
+# --------------------------------------------------------------------------------------
+MOTIONS = {"idle": 8, "bounce": 8, "sway": 8, "waddle": 8, "hit": 6}  # default frame counts
+
+
+def scale2x(idx: np.ndarray) -> np.ndarray:
+    """EPX / Scale2x on an index grid: doubles the size and rounds diagonals without inventing colours."""
+    p = np.pad(idx, 1, mode="edge")
+    a, b, c, d = p[:-2, 1:-1], p[1:-1, 2:], p[1:-1, :-2], p[2:, 1:-1]
+    out = np.empty((idx.shape[0] * 2, idx.shape[1] * 2), idx.dtype)
+    out[0::2, 0::2] = np.where((c == a) & (c != d) & (a != b), a, idx)
+    out[0::2, 1::2] = np.where((a == b) & (a != c) & (b != d), b, idx)
+    out[1::2, 0::2] = np.where((d == c) & (d != b) & (c != a), c, idx)
+    out[1::2, 1::2] = np.where((b == d) & (b != a) & (d != c), d, idx)
+    return out
+
+
+def rotate_idx(idx: np.ndarray, deg: float, pivot: tuple[float, float]) -> np.ndarray:
+    """RotSprite-style rotation about `pivot` (pixel-edge coordinates): scale 8x with Scale2x, rotate by
+    nearest-neighbour inverse mapping while shrinking back, so no colour is invented and edges stay clean."""
+    if deg == 0:
+        return idx.copy()
+    big = idx
+    for _ in range(3):
+        big = scale2x(big)
+    h, w = idx.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    dx, dy = xx + 0.5 - pivot[0], yy + 0.5 - pivot[1]
+    th = math.radians(deg)  # positive = clockwise on screen (y down)
+    sx = dx * math.cos(th) + dy * math.sin(th) + pivot[0]
+    sy = -dx * math.sin(th) + dy * math.cos(th) + pivot[1]
+    ix, iy = np.floor(sx * 8).astype(int), np.floor(sy * 8).astype(int)
+    ok = (ix >= 0) & (ix < w * 8) & (iy >= 0) & (iy < h * 8)
+    out = np.full((h, w), -1, idx.dtype)
+    out[ok] = big[iy[ok], ix[ok]]
+    return out
+
+
+def scale_idx(idx: np.ndarray, sx: float, sy: float, pivot: tuple[float, float]) -> np.ndarray:
+    """Nearest-neighbour squash/stretch about `pivot` (the feet): rows and columns are repeated or dropped."""
+    h, w = idx.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    ix = np.floor(pivot[0] + (xx + 0.5 - pivot[0]) / sx).astype(int)
+    iy = np.floor(pivot[1] + (yy + 0.5 - pivot[1]) / sy).astype(int)
+    ok = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
+    out = np.full((h, w), -1, idx.dtype)
+    out[ok] = idx[iy[ok], ix[ok]]
+    return out
+
+
+def shift_idx(idx: np.ndarray, dx: int, dy: int) -> np.ndarray:
+    out = np.full_like(idx, -1)
+    h, w = idx.shape
+    ys, xs = slice(max(dy, 0), h + min(dy, 0)), slice(max(dx, 0), w + min(dx, 0))
+    ys2, xs2 = slice(max(-dy, 0), h + min(-dy, 0)), slice(max(-dx, 0), w + min(-dx, 0))
+    out[ys, xs] = idx[ys2, xs2]
+    return out
+
+
+def shear_idx(idx: np.ndarray, amp: float, feet_y: int, top_y: int) -> np.ndarray:
+    """Per-row integer sideways shift that grows with height above the feet (the top sways, the feet stay)."""
+    out = np.full_like(idx, -1)
+    span = max(feet_y - top_y, 1)
+    for y in range(idx.shape[0]):
+        frac = min(max((feet_y - y) / span, 0.0), 1.0)
+        out[y] = shift_idx(idx[y:y + 1], int(round(amp * frac ** 1.5)), 0)[0]
+    return out
+
+
+def motion_frames(idx: np.ndarray, pal_rgb: np.ndarray, motion: str, n: int, amount: float):
+    """-> list of index grids (one per frame, same canvas). All motion is a formula of t = k / n, so a looping
+    motion closes by construction and two runs are byte-identical."""
+    h, w = idx.shape
+    ys, xs = np.where(idx >= 0)
+    feet_y, top_y = int(ys.max()) + 1, int(ys.min())
+    pivot = ((xs.min() + xs.max() + 1) / 2, float(feet_y))
+    sh, sw = feet_y - top_y, xs.max() + 1 - xs.min()
+    frames = []
+    for k in range(n):
+        t = k / n
+        f = idx
+        if motion == "idle":  # breathing: gentle squash and stretch about the feet, area roughly preserved
+            sy = 1 + 0.05 * amount * math.sin(2 * math.pi * t)
+            f = scale_idx(f, 1 - 0.5 * (sy - 1), sy, pivot)
+        elif motion == "bounce":  # hop: parabola, squashed on the ground, stretched at the apex
+            air = 4 * t * (1 - t)
+            g = 1 - air
+            sy = 1 - 0.12 * amount * g ** 6 + 0.08 * amount * air ** 2
+            f = scale_idx(f, 1 - 0.6 * (sy - 1), sy, pivot)
+            f = shift_idx(f, 0, -int(round(0.22 * sh * amount * air)))
+        elif motion == "sway":  # tall things lean side to side, rooted at the feet
+            f = shear_idx(f, max(1.0, 0.10 * sw) * amount * math.sin(2 * math.pi * t), feet_y, top_y)
+        elif motion == "waddle":  # lean left and right about the feet with a bob on each step
+            f = rotate_idx(f, 6.0 * amount * math.sin(2 * math.pi * t), pivot)
+            f = shift_idx(f, 0, -int(round(max(1.0, 0.03 * sh) * amount * abs(math.sin(2 * math.pi * t)))))
+        elif motion == "hit":  # flash in the sprite's lightest colour, then a decaying shake and lean
+            decay = 1 - t
+            if k < max(1, n // 4):
+                lightest = int(np.argmax(srgb_to_oklab(pal_rgb)[:, 0]))
+                f = np.where(f >= 0, lightest, -1).astype(f.dtype)
+            f = rotate_idx(f, 6.0 * amount * decay * math.sin(3 * math.pi * t), pivot)
+            f = shift_idx(f, int(round(max(1.0, 0.06 * sw) * amount * decay * math.cos(4 * math.pi * t))), 0)
+        else:
+            raise SystemExit(f"unknown motion '{motion}' (choose from {', '.join(MOTIONS)})")
+        frames.append(f)
+    return frames
+
+
+def cmd_animate(o):
+    src = Path(o.inputs[0])
+    rgba = np.asarray(Image.open(src).convert("RGBA"))
+    alpha = rgba[..., 3]
+    if ((alpha > 0) & (alpha < 255)).any():
+        raise SystemExit(f"{src}: has semi-transparent pixels. Run `spritekit finish` first (alpha must be 0 or 255).")
+    pal, inv = np.unique(rgba[alpha > 0][:, :3], axis=0, return_inverse=True)
+    if len(pal) > 256:
+        raise SystemExit(f"{src}: {len(pal)} colors. Run `spritekit finish` first; animate needs a palette-exact sprite.")
+    n = o.frames or MOTIONS[o.motion]
+    pad = max(rgba.shape[:2]) // 2 + 2  # generous temporary canvas; cropped to the union of all frames below
+    idx = np.full((rgba.shape[0] + 2 * pad, rgba.shape[1] + 2 * pad), -1, np.int32)
+    core = np.full(alpha.shape, -1, np.int32)
+    core[alpha > 0] = inv.ravel()
+    idx[pad:pad + rgba.shape[0], pad:pad + rgba.shape[1]] = core
+    frames = motion_frames(idx, pal, o.motion, n, o.amount)
+    cover = np.zeros(idx.shape, bool)
+    for f in frames:
+        cover |= f >= 0
+    ys, xs = np.where(cover)
+    y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
+    canvas = [render(f[y0:y1, x0:x1], pal) for f in frames]
+
+    # QA: the properties this command promises, measured
+    used = np.unique(np.concatenate([c[c[..., 3] > 0][:, :3] for c in canvas]), axis=0)
+    new_colors = len({tuple(c) for c in used} - {tuple(c) for c in pal})
+    src_orph = float(orphan_mask(core).sum() / max((core >= 0).sum(), 1))
+    orph = [float(orphan_mask(f[y0:y1, x0:x1]).sum() / max((f >= 0).sum(), 1)) for f in frames]
+    diffs = [float((canvas[i] != canvas[(i + 1) % n]).any(-1).mean()) for i in range(n)]
+    qa = {"motion": o.motion, "frames": n, "cell": [int(x1 - x0), int(y1 - y0)], "new_colors": new_colors,
+          "palette_colors": len(pal), "orphan_ratio_source": round(src_orph, 4),
+          "orphan_ratio_max": round(max(orph), 4), "orphan_increase": round(max(orph) - src_orph, 4),
+          "frame_delta_mean": round(float(np.mean(diffs)), 3)}
+    gates = {"new_colors": _grade(new_colors, 0, 0, "high"),
+             "orphan_increase": _grade(qa["orphan_increase"], 0.02, 0.05, "high"),
+             "frame_delta_mean": _grade(qa["frame_delta_mean"], 0.01, 0.002, "low")}
+    qa["gates"] = gates
+    qa["verdict"] = "FAIL" if "FAIL" in gates.values() else ("WARN" if "WARN" in gates.values() else "PASS")
+
+    out = Path(o.out)
+    name = o.name or f"{src.stem}_{o.motion}"
+    write_bundle(out, name, canvas, o.fps, o.cols, [src.name], {"motion": o.motion, "amount": o.amount,
+                 "palette": [to_hex(c) for c in pal], "qa": qa})
+    if o.scale:
+        k = o.scale
+        bg = np.array((58, 58, 66), np.uint8)
+        ims = []
+        for c in canvas:
+            big = np.repeat(np.repeat(c, k, 0), k, 1)
+            comp = np.where(big[..., 3:] > 0, big[..., :3], bg).astype(np.uint8)
+            ims.append(Image.fromarray(comp))
+        ims[0].save(out / f"{name}.gif", save_all=True, append_images=ims[1:], duration=int(1000 / o.fps), loop=0, disposal=2)
+    print(f"{qa['verdict']:<4} {name}: {n} frames, cell {qa['cell'][0]}x{qa['cell'][1]}, {qa['palette_colors']} colors, "
+          f"new colors {new_colors}, speckle +{qa['orphan_increase'] * 100:.1f}%, delta {qa['frame_delta_mean']}"
+          + "".join(f"  [{k}:{v}]" for k, v in gates.items() if v != "PASS"))
+    return 2 if qa["verdict"] == "FAIL" else 0
 
 
 # --------------------------------------------------------------------------------------
@@ -1272,6 +1448,17 @@ def build_parser():
     p.add_argument("--anchor", choices=ANCHORS, default="bottom-center")
     p.add_argument("--loop", action="store_true", help="check that the last frame returns to the first")
     p.set_defaults(fn=cmd_sheet)
+    p = sub.add_parser("animate", help="deterministic motion for a finished sprite (no model, no new colours)")
+    p.add_argument("inputs", nargs=1)
+    p.add_argument("--out", required=True)
+    p.add_argument("--motion", choices=list(MOTIONS), required=True)
+    p.add_argument("--name")
+    p.add_argument("--frames", type=int, help="frames per cycle (default depends on the motion)")
+    p.add_argument("--fps", type=int, default=8)
+    p.add_argument("--amount", type=float, default=1.0, help="motion strength multiplier")
+    p.add_argument("--cols", type=int)
+    p.add_argument("--scale", type=int, default=4, help="also write a nearest-neighbour preview GIF (0 = none)")
+    p.set_defaults(fn=cmd_animate)
     p = sub.add_parser("qa", help="QA already-native sprites")
     common(p, grid=False)
     p.set_defaults(fn=cmd_qa)
@@ -1286,7 +1473,7 @@ def build_parser():
 
 def main(argv=None):
     o = build_parser().parse_args(argv)
-    if o.cmd in ("finish", "rank", "sheet") and not o.out:
+    if o.cmd in ("finish", "rank", "sheet", "animate") and not o.out:
         raise SystemExit("--out is required")
     if o.cmd == "sheet" and len(o.inputs) < 2:
         raise SystemExit("sheet needs at least 2 frames (use finish for one sprite)")
