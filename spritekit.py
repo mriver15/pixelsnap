@@ -482,7 +482,8 @@ def extract_cells(path, o) -> CellGrid:
         raise SystemExit(f"{path}: no foreground found (background tolerance {o.bg_tol} may be too high)")
     ys, xs = np.where(fg_px)
     box = (xs.min(), xs.max() + 1, ys.min(), ys.max() + 1)
-    clipped = bool(bg.any() and main_body_touches_border(fg_px))
+    # only judged on a keyed generation: a pre-matted, trimmed PNG touches its own canvas edge by construction
+    clipped = bool(alpha is None and bg.any() and main_body_touches_border(fg_px))
     uniq = len(np.unique(rgb.reshape(-1, 3), axis=0))
     info = {"source": str(path), "source_size": [w, h], "source_colors": uniq, "clipped": clipped,
             "bg_color": to_hex(bg_rgb) if bg_rgb is not None else None, "has_alpha": alpha is not None}
