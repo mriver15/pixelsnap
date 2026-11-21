@@ -174,25 +174,30 @@ def background_model(lab: np.ndarray) -> np.ndarray:
 
 def estimate_background(rgb: np.ndarray, lab: np.ndarray, tol: float, key: tuple | None):
     """Flat, noisy or gently graded generated background -> (bg_mask, bg_rgb). No usable background -> all
-    False. The background is modelled from the border edges (see background_model) and accepted when at
-    least half the ring lies within a tolerance that widens with the ring's own spread. Judged on a lightly
+    False. The border background is modelled from the border edges (see background_model) and accepted when
+    at least half the ring lies within a tolerance that widens with the ring's own spread. A chroma KEY
+    (`--bg`) is removed wherever it appears: generators often draw the key as an inset rectangle on a pale
+    margin, or leave key-coloured pockets between limbs, and neither is border-connected. Judged on a lightly
     smoothed copy so noise cannot break flood-fill connectivity."""
     h, w, _ = lab.shape
-    if key is not None:
-        bg_rgb = np.array(key, np.uint8)
-        model = np.broadcast_to(srgb_to_oklab(bg_rgb), lab.shape)
-    else:
-        model = background_model(lab)
+    smooth = box_blur(lab)
+    model = background_model(lab)
     ring = np.concatenate([lab[0] - model[0], lab[-1] - model[-1], lab[:, 0] - model[:, 0], lab[:, -1] - model[:, -1]])
     d = np.sqrt((ring ** 2).sum(-1))
     near = d[d < 0.12]
     noise = float(np.sqrt((near ** 2).mean())) if len(near) else 0.0
     tol_eff = max(tol, min(2.5 * noise, 0.12))  # capped: dark sprite parts on a dark bg are ambiguous
-    if key is None and (d < tol_eff).mean() < 0.5:
+    edge_ok = (d < tol_eff).mean() >= 0.5
+    mask = np.zeros((h, w), bool)
+    if edge_ok:
+        mask |= border_connected(np.sqrt(((smooth - model) ** 2).sum(-1)) < tol_eff)
+    if key is not None:
+        key_rgb = np.array(key, np.uint8)
+        mask |= np.sqrt(((smooth - srgb_to_oklab(key_rgb)) ** 2).sum(-1)) < max(tol, 0.10)
+        return mask, key_rgb
+    if not edge_ok:
         return np.zeros((h, w), bool), None
-    cand = np.sqrt(((box_blur(lab) - model) ** 2).sum(-1)) < tol_eff
-    bg_rgb = bg_rgb if key is not None else oklab_to_srgb(np.median(model.reshape(-1, 3), axis=0))
-    return border_connected(cand), bg_rgb
+    return mask, oklab_to_srgb(np.median(model.reshape(-1, 3), axis=0))
 
 
 # --------------------------------------------------------------------------------------
@@ -919,7 +924,9 @@ def finalize(grid: CellGrid, pal_lab: np.ndarray, o, fixed_pal: np.ndarray | Non
         near = np.linalg.norm(pal_lab - srgb_to_oklab(parse_hex(bg)), axis=1) < 0.08
         grid.info["bg_collision"] = round(float(near[idx[idx >= 0]].mean()), 3) if (idx >= 0).any() else 0.0
     if bg and o.defringe > 0:
-        idx, notes["defringed"] = defringe(idx, pal_lab, srgb_to_oklab(parse_hex(bg)), o.fringe_tol, o.defringe)
+        # a declared chroma key is a colour the sprite never uses, so its anti-aliased blends can go harder
+        tol = o.fringe_tol if o.fringe_tol is not None else (0.20 if o.bg else 0.08)
+        idx, notes["defringed"] = defringe(idx, pal_lab, srgb_to_oklab(parse_hex(bg)), tol, o.defringe)
     if bg and o.holes:
         idx, notes["holes_removed_cells"] = remove_enclosed(idx, pal_lab, srgb_to_oklab(parse_hex(bg)),
                                                             o.hole_tol, o.holes)
@@ -1232,8 +1239,9 @@ def build_parser():
             p.add_argument("--opaque", action="store_true", help="no background to remove (tiles, backdrops)")
             p.add_argument("--tau", type=float, default=0.05, help="OKLab distance under which colours merge")
             p.add_argument("--min-count", type=int, default=2, help="drop palette colours used by fewer cells")
-            p.add_argument("--defringe", type=int, default=1, help="rounds of leftover-background edge removal")
-            p.add_argument("--fringe-tol", type=float, default=0.08, help="edge cells this close to the bg colour are fringe")
+            p.add_argument("--defringe", type=int, default=2, help="rounds of leftover-background edge removal")
+            p.add_argument("--fringe-tol", type=float, default=None,
+                           help="edge cells this close to the bg colour are fringe (default 0.08; 0.20 with --bg)")
             p.add_argument("--hole-tol", type=float, default=0.035,
                            help="enclosed pockets this close to the bg colour are see-through (tight: pale shading must survive)")
             p.add_argument("--smooth", type=float, default=0.005,
