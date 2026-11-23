@@ -1,4 +1,4 @@
-> Snapshot of `knowledge/13-ai-sprite-pipeline.md` from the [whatmakesitgood](https://github.com/mriver15/whatmakesitgood) knowledge base (researched 2026-11). Operational detail is in [guide.md](guide.md).
+> The research behind pixelsnap: the field survey, what was tried and rejected, what was measured, and the open problems. This is the canonical copy; the [whatmakesitgood](https://github.com/mriver15/whatmakesitgood) knowledge base carries a short summary of it. Researched 2026-11. Operational detail is in [guide.md](guide.md).
 
 # 13 · AI Sprite Pipeline
 
