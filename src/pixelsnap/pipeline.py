@@ -142,7 +142,7 @@ def write_bundle(out: Path, name: str, canvas: list, fps: int, cols: int | None,
         "frames": [{"filename": f"{name} {i}", "frame": m["rect"], "rotated": False, "trimmed": False,
                     "spriteSourceSize": {"x": 0, "y": 0, "w": cw, "h": ch}, "sourceSize": {"w": cw, "h": ch},
                     "duration": int(1000 / fps)} for i, m in enumerate(frame_meta)],
-        "meta": {"app": "spritekit", "image": f"{name}_sheet.png", "format": "RGBA8888",
+        "meta": {"app": "pixelsnap", "image": f"{name}_sheet.png", "format": "RGBA8888",
                  "size": {"w": cols * cw, "h": rows * ch}, "scale": "1",
                  "frameTags": [{"name": name, "from": 0, "to": n - 1, "direction": "forward"}]}}, indent=2))
 

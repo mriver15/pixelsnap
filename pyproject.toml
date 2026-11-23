@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pixelsnap"
+version = "0.1.0"
+description = "Turn diffusion 'pixel art' into real, verified pixel art: recover the grid, lock the palette, measure the result."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "mriver15" }]
+requires-python = ">=3.10"
+dependencies = ["pillow>=10.0", "numpy>=1.24"]
+keywords = ["pixel-art", "sprites", "gamedev", "stable-diffusion", "comfyui", "indie-games"]
+
+[project.urls]
+Homepage = "https://github.com/mriver15/pixelsnap"
+
+[project.scripts]
+pixelsnap = "pixelsnap.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

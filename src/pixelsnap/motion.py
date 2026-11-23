@@ -129,10 +129,10 @@ def cmd_animate(o):
     rgba = np.asarray(Image.open(src).convert("RGBA"))
     alpha = rgba[..., 3]
     if ((alpha > 0) & (alpha < 255)).any():
-        raise SystemExit(f"{src}: has semi-transparent pixels. Run `spritekit finish` first (alpha must be 0 or 255).")
+        raise SystemExit(f"{src}: has semi-transparent pixels. Run `pixelsnap finish` first (alpha must be 0 or 255).")
     pal, inv = np.unique(rgba[alpha > 0][:, :3], axis=0, return_inverse=True)
     if len(pal) > 256:
-        raise SystemExit(f"{src}: {len(pal)} colors. Run `spritekit finish` first; animate needs a palette-exact sprite.")
+        raise SystemExit(f"{src}: {len(pal)} colors. Run `pixelsnap finish` first; animate needs a palette-exact sprite.")
     n = o.frames or MOTIONS[o.motion]
     pad = max(rgba.shape[:2]) // 2 + 2  # generous temporary canvas; cropped to the union of all frames below
     idx = np.full((rgba.shape[0] + 2 * pad, rgba.shape[1] + 2 * pad), -1, np.int32)

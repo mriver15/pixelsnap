@@ -101,7 +101,7 @@ def lattice_lines(period: float, phase: float, n: int) -> np.ndarray:
     return phase + np.arange(k0, k1 + 1) * period
 
 
-DP_LAM, DP_BASE, DP_SLACK = 2.0, 0.2, 0.3  # tuned on jittered synthetic ground truth (see scripts/test_spritekit.py)
+DP_LAM, DP_BASE, DP_SLACK = 2.0, 0.2, 0.3  # tuned on jittered synthetic ground truth (see tests/test_pixelsnap.py)
 
 
 def edge_energy(e: np.ndarray, lo: float, hi: float) -> np.ndarray:

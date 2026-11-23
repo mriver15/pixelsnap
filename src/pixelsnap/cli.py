@@ -4,17 +4,19 @@ from __future__ import annotations
 import argparse
 import sys
 
+from . import __version__
 from .pipeline import ANCHORS, cmd_finish, cmd_rank, cmd_sheet
 from .motion import MOTIONS, cmd_animate
 from .review import cmd_analyze, cmd_preview, cmd_qa
 
 
-DESCRIPTION = ("spritekit: turn diffusion \"pixel art\" into real, verified pixel art. Recovers the grid, rebuilds "
+DESCRIPTION = ("pixelsnap: turn diffusion \"pixel art\" into real, verified pixel art. Recovers the grid, rebuilds "
                "the sprite at its true resolution, locks a palette, cleans it, and measures the result.")
 
 
 def build_parser():
-    ap = argparse.ArgumentParser(prog="spritekit", description=DESCRIPTION)
+    ap = argparse.ArgumentParser(prog="pixelsnap", description=DESCRIPTION)
+    ap.add_argument("--version", action="version", version=f"pixelsnap {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     def common(p, grid=True):
